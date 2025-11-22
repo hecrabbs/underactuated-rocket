@@ -1,34 +1,165 @@
+import logging
+import random
 from dataclasses import dataclass, field
-from typing import Literal
 
 import numpy as np
 
-COL_VEC = np.ndarray[tuple[Literal[2], Literal[1]], np.float64]
+from constants import ACCEL_GRAVITY, COL_VEC
+from helpers import cross_2d, new_col_vec
+
+
+@dataclass(frozen=True)
+class RocketParams:
+    m_B: float # Mass of body
+    m_C: float # Mass of control mass
+    m_fuel: float # Initial mass of fuel
+    d_0_B: COL_VEC # Control mass vertical offset (body frame)
+    d_1_B: COL_VEC # Control mass horizontal offset (body frame)
+    sigma_thrust: float # Thrust noise standard deviation (variance = sigma^2)
+    F_thrust_nominal: float # Nominal force of thrust (i.e. without noise)
+    r_B_to_thrust_B: COL_VEC # Point of thrust vertical offset (body frame)
 
 @dataclass
-class State:
-    # --- Constant user params ---
-    _m_total: float
+class RocketState:
+    params: RocketParams
 
-    # Position
-    p: COL_VEC = field(default_factory=lambda:
-                       np.array([0.0,0.0],dtype=np.float64)[:, np.newaxis])
-    # Velocity
-    v: COL_VEC = field(default_factory=lambda:
-                       np.array([0.0,0.0], dtype=np.float64)[:, np.newaxis])
-    # Yaw
-    psi: float = 0.0
-    # Angular velocity
-    omega: float = 0.0
-    # Control mass position
-    r: float = 0.0
-    # Control mass velocity
-    r_dot: float = 0.0
+    p: COL_VEC = field(default_factory=lambda: new_col_vec(0.0, 0.0)) # Pos
+    v: COL_VEC = field(default_factory=lambda: new_col_vec(0.0, 0.0)) # Vel
+    psi: float = 0.0 # Yaw
+    omega: float = 0.0 # Angular vel
+    r: float = 0.0 # Control mass position
+    r_dot: float = 0.0 # Control mass velocity
 
-    def transition(self, F_total_I, alpha, r_ddot):
+    verbosity: int = logging.WARNING
+
+    def _m_fuel(self):
+        """Mass of remaining fuel.
+        TODO: make decaying."""
+        return self.params.m_fuel
+
+    def _m_total(self, m_fuel):
+        """Total mass of rocket."""
+        params = self.params
+        return params.m_B + params.m_C + m_fuel
+
+    def _R_B_to_I(self):
+        """Rotation matrix from the body frame to inertial frame."""
+        psi = self.psi
+        return np.array([
+            [np.cos(psi), -np.sin(psi)],
+            [np.sin(psi),  np.cos(psi)]
+        ])
+
+    def _F_thrust_I(self, m_fuel, R_B_to_I):
+        """Force due to thrust (inertial frame)."""
+        params = self.params
+        # Check if out of fuel
+        if m_fuel == 0:
+            # No thrust.
+            return new_col_vec(0.0, 0.0)
+        else:
+            noise = random.gauss(0.0, params.sigma_thrust)
+            # Force vector in body frame.
+            F_thrust_B = new_col_vec(0.0, params.F_thrust_nominal + noise)
+            # Rotate from B to I.
+            return R_B_to_I @ F_thrust_B
+
+    def _F_g_I(self, m_total):
+        """Force due to gravity (interial frame)."""
+        return  new_col_vec(0.0, m_total * -ACCEL_GRAVITY)
+
+    def _F_total_I(self, F_thrust_I, F_g_I):
+        """Sum of all translational forces (inertial frame)."""
+        return F_thrust_I + F_g_I
+
+    def _a_I(self, F_total_I, m_total):
+        """Rocket acceleration (inertial frame)."""
+        return F_total_I/m_total
+
+
+    def _r_B_to_CM_B(self, m_total):
+        """Distance vector from body to Center of Mass (CM) (body frame)."""
+        params = self.params
+        return params.m_C * (params.d_0_B + self.r * params.d_1_B) / m_total
+
+    def _r_CM_to_thrust_I(self, R_B_to_I, r_B_to_CM_B):
+        """
+        Distance vector from Center of Mass (CM) to point of thrust (inertial
+        frame).
+        """
+        # Distance vector in body frame.
+        r_CM_to_thrust_B = -r_B_to_CM_B + self.params.r_B_to_thrust_B
+        # Rotate from B to I
+        return R_B_to_I @ r_CM_to_thrust_B
+
+    def _tau_thrust_I(self, r_CM_to_thrust_I, F_thrust_I):
+        """Torque due to thrust (inertial frame)."""
+        return cross_2d(r_CM_to_thrust_I, F_thrust_I)
+
+    # def F_r_ddot_on_C_B(self):
+    #     """Force on C due to r_ddot in body frame."""
+    #     return new_col_vec(self.m_C*self.state.r_ddot)
+
+    # def r_CM_to_C_B(self):
+    #     """Vector from center of mass to C in body frame."""
+    #     return -self.r_CM_B() + self.d_0 + self.state.r * self.d_1
+
+    # def F_r_ddot_on_B_B(self):
+    #     """Force on B due to r_ddot in body frame."""
+    #     return new_col_vec(self.m_B*self.state.r_ddot)
+
+    # def r_CM_to_d_0_B(self):
+    #     """Vector from center of mass to head of d_0 in body frame."""
+    #     return -self.r_CM_B() + self.d_0
+
+    # def tau_r_ddot(self):
+    #     """Torque due to accel. of r (same in inertial and body frames)."""
+    #     tau_C = cross_2d(self.r_CM_to_C_B(), self.F_r_ddot_on_C_B())
+    #     tau_B = cross_2d(self.r_CM_to_d_0_B(), self.F_r_ddot_on_B_B())
+    #     return tau_C + tau_B
+
+    def _tau_total_I(self, tau_thrust_I):
+        """Sum of all torques (inertial fram).
+        TODO: Add torque due to accel on C"""
+        return tau_thrust_I
+
+    def _I(self, m_total):
+        """Moment of inertia of the rocket.
+        TODO"""
+        length = 1
+        return 0.25*m_total*(0.5)**2 + (1/3)*m_total*(length**2)
+
+    def _alpha_I(self, tau_total_I, I):
+        """Angular acceleration (inertial frame)."""
+        return tau_total_I / I
+
+    def transition(self, r_ddot: float):
+        """
+        In place state transition.
+
+        Parameters
+        ----------
+        r_ddot : float
+            Control mass acceleration (input/action)
+        """
+        # Calculate some intermediate values
+        m_fuel = self._m_fuel()
+        m_total = self._m_total(m_fuel)
+        R_B_to_I = self._R_B_to_I()
+        F_thrust_I = self._F_thrust_I(m_fuel, R_B_to_I)
+        F_g_I = self._F_g_I(m_total)
+        F_total_I = self._F_total_I(F_thrust_I, F_g_I)
+
+        r_B_to_CM_B = self._r_B_to_CM_B(m_total)
+        r_CM_to_thrust_I = self._r_CM_to_thrust_I(R_B_to_I, r_B_to_CM_B)
+        tau_thrust_I = self._tau_thrust_I(r_CM_to_thrust_I, F_thrust_I)
+        tau_total_I = self._tau_total_I(tau_thrust_I)
+        I = self._I(m_total)
+
+        # Update state
         self.p += self.v
-        self.v += F_total_I/self._m_total
+        self.v += self._a_I(F_total_I, m_total)
         self.psi += self.omega
-        self.omega += alpha
+        self.omega += self._alpha_I(tau_total_I, I)
         self.r += self.r_dot
         self.r_dot += r_ddot

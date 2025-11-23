@@ -37,6 +37,21 @@ class RocketState:
 
     verbosity: int = logging.WARNING
 
+    def __post_init__(self):
+        # Set up logger
+        logger = logging.getLogger(__name__)
+        logger.setLevel(self.verbosity)
+        handler = logging.StreamHandler()
+        handler.setLevel(self.verbosity)
+        formatter = logging.Formatter("%(levelname)s: %(message)s")
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
+
+        self.logger = logger
+
+        # Log initial state
+        self.logger.debug(f"{self=}\n")
+
     def _m_fuel(self):
         """Mass of remaining fuel.
         TODO: make decaying."""
@@ -159,19 +174,39 @@ class RocketState:
         """
         # Calculate some intermediate values
         m_fuel = self._m_fuel()
+        self.logger.debug(f"{m_fuel=}")
         m_total = self._m_total(m_fuel)
+        self.logger.debug(f"{m_total=}")
+
         R_B_to_I = self._R_B_to_I()
+        self.logger.debug(f"{R_B_to_I=}")
+
         F_thrust_I = self._F_thrust_I(m_fuel, R_B_to_I)
+        self.logger.debug(f"{F_thrust_I=}")
+
         F_g_I = self._F_g_I(m_total)
+        self.logger.debug(f"{F_g_I=}")
+
         F_total_I = self._F_total_I(F_thrust_I, F_g_I)
+        self.logger.debug(f"{F_total_I=}")
 
         d_1_B = self._d_1_B()
+        self.logger.debug(f"{d_1_B=}")
         r_C_B = self._r_C_B(d_1_B)
+        self.logger.debug(f"{r_C_B=}")
         r_CM_B = self._r_CM_B(m_total, r_C_B)
+        self.logger.debug(f"{r_CM_B=}")
         r_CM_to_thrust_I = self._r_CM_to_thrust_I(R_B_to_I, r_CM_B)
+        self.logger.debug(f"{r_CM_to_thrust_I=}")
+
         tau_thrust_I = self._tau_thrust_I(r_CM_to_thrust_I, F_thrust_I)
+        self.logger.debug(f"{tau_thrust_I=}")
+
         tau_total_I = self._tau_total_I(tau_thrust_I)
+        self.logger.debug(f"{tau_total_I=}")
+
         I = self._I(m_total)
+        self.logger.debug(f"{I=}")
 
         # Update state
         self.p += self.v
@@ -180,3 +215,5 @@ class RocketState:
         self.omega += self._alpha_I(tau_total_I, I)
         self.theta_C += self.omega_C
         self.omega_C += alpha_C
+
+        self.logger.debug(f"{self=}\n")

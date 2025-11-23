@@ -1,12 +1,12 @@
+import argparse
 import logging
-from dataclasses import dataclass
-from pprint import pprint
 
 import matplotlib.pyplot as plt
 import numpy as np
 
 from helpers import new_col_vec
-from state import RocketState, RocketParams
+from state import RocketParams, RocketState
+
 
 def main(verbosity=logging.WARNING):
     params = RocketParams(
@@ -21,10 +21,6 @@ def main(verbosity=logging.WARNING):
     )
 
     state = RocketState(params, verbosity=verbosity)
-    pprint(state)
-
-    # inputs = [
-    # 0.4, 0.4, 0.2, 0.8, 1.2, 2.0, 2.4, 1.8, 1.2, 0.5, -0.3]
     inputs = [0,0.01,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
     x_coords = []
     y_coords = []
@@ -34,7 +30,6 @@ def main(verbosity=logging.WARNING):
         y_coords.append(state.p[1][0])
         psi_deg.append(np.degrees(state.psi))
         state.transition(input)
-        pprint(state)
 
     fig,axs = plt.subplots(2)
     axs[0].plot(x_coords, y_coords)
@@ -43,4 +38,9 @@ def main(verbosity=logging.WARNING):
     plt.show()
 
 if __name__ == '__main__':
-    main(logging.DEBUG)
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-v', "--verbosity", type=str, default="WARNING",
+        choices=("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"))
+    args = parser.parse_args()
+
+    main(args.verbosity)

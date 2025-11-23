@@ -1,11 +1,13 @@
 """Helper functions."""
 
+from typing import Literal
+
 import numpy as np
 
-from constants import COL_VEC
+# Type hint for column vector
+COL_VEC = np.ndarray[tuple[int, Literal[1]], np.float64]
 
-
-def new_col_vec(*args):
+def new_col_vec(*args) -> COL_VEC:
     """Create a new column vector."""
     return np.array([*args])[:, np.newaxis]
 

@@ -1,20 +1,20 @@
 import logging
+from dataclasses import dataclass
 from pprint import pprint
 
 import matplotlib.pyplot as plt
 import numpy as np
 
 from helpers import new_col_vec
-from state import RocketParams, RocketState
-
+from state import RocketState, RocketParams
 
 def main(verbosity=logging.WARNING):
     params = RocketParams(
         m_B=100,
         m_C=10,
         m_fuel=10,
-        d_0_B=new_col_vec(0.0, 0.5),
-        d_1_B=new_col_vec(0.25, 0.0),
+        mag_d_0=0.5,
+        mag_d_1=0.25,
         sigma_thrust=0.1,
         F_thrust_nominal=2000,
         r_B_to_thrust_B=new_col_vec(0.0, -0.5)
@@ -25,7 +25,7 @@ def main(verbosity=logging.WARNING):
 
     # inputs = [
     # 0.4, 0.4, 0.2, 0.8, 1.2, 2.0, 2.4, 1.8, 1.2, 0.5, -0.3]
-    inputs = [0.01,0,0,0,0,0,0,0,0,0,0]
+    inputs = [0,0.01,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
     x_coords = []
     y_coords = []
     psi_deg = []

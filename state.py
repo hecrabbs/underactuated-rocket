@@ -1,34 +1,39 @@
 import logging
+import math
 import random
 from dataclasses import dataclass, field
 
 import numpy as np
 
-from constants import ACCEL_GRAVITY, COL_VEC
-from helpers import cross_2d, new_col_vec
+from constants import ACCEL_GRAVITY, I_BASIS
+from helpers import COL_VEC, cross_2d, new_col_vec
 
 
 @dataclass(frozen=True)
 class RocketParams:
-    m_B: float # Mass of body
-    m_C: float # Mass of control mass
+    m_B: float # Mass of body (B)
+    m_C: float # Mass of control mass (C)
     m_fuel: float # Initial mass of fuel
-    d_0_B: COL_VEC # Control mass vertical offset (body frame)
-    d_1_B: COL_VEC # Control mass horizontal offset (body frame)
+    mag_d_0: float # Magnitude of C vertical offset vector
+    mag_d_1: float # Magnitude of C horizontal offset vector
     sigma_thrust: float # Thrust noise standard deviation (variance = sigma^2)
     F_thrust_nominal: float # Nominal force of thrust (i.e. without noise)
     r_B_to_thrust_B: COL_VEC # Point of thrust vertical offset (body frame)
+
+    def __post_init__(self):
+         # C vertical offset. Use object.__setattr__ since frozen==True
+        object.__setattr__(self, "d_0_B", new_col_vec(0.0, self.mag_d_0, 0.0))
 
 @dataclass
 class RocketState:
     params: RocketParams
 
-    p: COL_VEC = field(default_factory=lambda: new_col_vec(0.0, 0.0)) # Pos
-    v: COL_VEC = field(default_factory=lambda: new_col_vec(0.0, 0.0)) # Vel
+    p: COL_VEC = field(default_factory=lambda: new_col_vec(0.0, 0.0)) # B pos
+    v: COL_VEC = field(default_factory=lambda: new_col_vec(0.0, 0.0)) # B vel
     psi: float = 0.0 # Yaw
     omega: float = 0.0 # Angular vel
-    r: float = 0.0 # Control mass position
-    r_dot: float = 0.0 # Control mass velocity
+    theta_C: float = math.pi/2 # Control mass vector direction (body frame)
+    omega_C: float = 0.0 # Control mass angular velocity (body frame)
 
     verbosity: int = logging.WARNING
 
@@ -46,8 +51,8 @@ class RocketState:
         """Rotation matrix from the body frame to inertial frame."""
         psi = self.psi
         return np.array([
-            [np.cos(psi), -np.sin(psi)],
-            [np.sin(psi),  np.cos(psi)]
+            [math.cos(psi), -math.sin(psi)],
+            [math.sin(psi),  math.cos(psi)]
         ])
 
     def _F_thrust_I(self, m_fuel, R_B_to_I):
@@ -76,19 +81,29 @@ class RocketState:
         """Rocket acceleration (inertial frame)."""
         return F_total_I/m_total
 
+    def _d_1_B(self):
+        """Distance vector from d_0_B to the control mass C (3D body frame)."""
+        mag_d_1 = self.params.mag_d_1
+        x = mag_d_1*math.cos(self.theta_C)
+        y = self.params.mag_d_0
+        z = mag_d_1*math.sin(self.theta_C)
+        return new_col_vec(x, y, z)
 
-    def _r_B_to_CM_B(self, m_total):
-        """Distance vector from body to Center of Mass (CM) (body frame)."""
-        params = self.params
-        return params.m_C * (params.d_0_B + self.r * params.d_1_B) / m_total
+    def _r_C_B(self, d_1_B):
+        """Distance vector to the control mass "C" (body frame)."""
+        return self.params.d_0_B + d_1_B[0][0]*I_BASIS
 
-    def _r_CM_to_thrust_I(self, R_B_to_I, r_B_to_CM_B):
+    def _r_CM_B(self, m_total, r_C_B):
+        """Distance vector to the Center of Mass (CM) (body frame)."""
+        return self.params.m_C * r_C_B[0:2][:] / m_total
+
+    def _r_CM_to_thrust_I(self, R_B_to_I, r_CM_B):
         """
-        Distance vector from Center of Mass (CM) to point of thrust (inertial
+        Distance vector from CM to point of thrust (inertial
         frame).
         """
         # Distance vector in body frame.
-        r_CM_to_thrust_B = -r_B_to_CM_B + self.params.r_B_to_thrust_B
+        r_CM_to_thrust_B = -r_CM_B + self.params.r_B_to_thrust_B
         # Rotate from B to I
         return R_B_to_I @ r_CM_to_thrust_B
 
@@ -133,14 +148,14 @@ class RocketState:
         """Angular acceleration (inertial frame)."""
         return tau_total_I / I
 
-    def transition(self, r_ddot: float):
+    def transition(self, alpha_C: float):
         """
         In place state transition.
 
         Parameters
         ----------
-        r_ddot : float
-            Control mass acceleration (input/action)
+        alpha_C : float
+            Control mass angular acceleration (input/action)
         """
         # Calculate some intermediate values
         m_fuel = self._m_fuel()
@@ -150,8 +165,10 @@ class RocketState:
         F_g_I = self._F_g_I(m_total)
         F_total_I = self._F_total_I(F_thrust_I, F_g_I)
 
-        r_B_to_CM_B = self._r_B_to_CM_B(m_total)
-        r_CM_to_thrust_I = self._r_CM_to_thrust_I(R_B_to_I, r_B_to_CM_B)
+        d_1_B = self._d_1_B()
+        r_C_B = self._r_C_B(d_1_B)
+        r_CM_B = self._r_CM_B(m_total, r_C_B)
+        r_CM_to_thrust_I = self._r_CM_to_thrust_I(R_B_to_I, r_CM_B)
         tau_thrust_I = self._tau_thrust_I(r_CM_to_thrust_I, F_thrust_I)
         tau_total_I = self._tau_total_I(tau_thrust_I)
         I = self._I(m_total)
@@ -161,5 +178,5 @@ class RocketState:
         self.v += self._a_I(F_total_I, m_total)
         self.psi += self.omega
         self.omega += self._alpha_I(tau_total_I, I)
-        self.r += self.r_dot
-        self.r_dot += r_ddot
+        self.theta_C += self.omega_C
+        self.omega_C += alpha_C

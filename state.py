@@ -28,7 +28,7 @@ class RocketParams:
 class RocketState:
     params: RocketParams
 
-    p: COL_VEC = field(default_factory=lambda: new_col_vec(0.0, 0.0)) # B pos
+    p: COL_VEC = field(default_factory=lambda: new_col_vec(0.0, 10.0)) # B pos
     v: COL_VEC = field(default_factory=lambda: new_col_vec(0.0, 0.0)) # B vel
     psi: float = 0.0 # Yaw
     omega: float = 0.0 # Angular vel
@@ -51,6 +51,24 @@ class RocketState:
 
         # Log initial state
         self.logger.debug(f"{self=}\n")
+
+    def set_state(self, state_arr):
+        self.p[0][0] = state_arr[0]
+        self.p[1][0] = state_arr[1]
+        self.v[0][0] = state_arr[2]
+        self.v[1][0] = state_arr[3]
+        self.psi = state_arr[4]
+        self.omega = state_arr[5]
+        self.theta_C = state_arr[6]
+        self.omega_C = state_arr[7]
+
+    def get_state(self):
+        return np.array([*self.p.T[0],
+                         *self.v.T[0],
+                         self.psi,
+                         self.omega,
+                         self.theta_C,
+                         self.omega_C])
 
     def _m_fuel(self):
         """Mass of remaining fuel.
@@ -172,6 +190,8 @@ class RocketState:
         alpha_C : float
             Control mass angular acceleration (input/action)
         """
+        self.logger.debug(f"{alpha_C=}")
+
         # Calculate some intermediate values
         m_fuel = self._m_fuel()
         self.logger.debug(f"{m_fuel=}")

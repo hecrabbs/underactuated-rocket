@@ -14,6 +14,7 @@ class RocketParams:
     m_B: float # Mass of body (kg)
     m_C: float # Mass of control mass (kg)
     m_fuel: float # Initial mass of fuel (kg)
+    m_fuel_rate: float # Rate of fuel mass
     height: float # Rocket height (m)
     radius: float # Rocket radius (m)
     mag_d_0: float # Control mass vertical offset (m)
@@ -23,7 +24,7 @@ class RocketParams:
     seed: int # Seed for random variables so that randomness is reproducible
 
     def __post_init__(self):
-         # C vertical offset. Use object.__setattr__ since frozen==True
+        # C vertical offset. Use object.__setattr__ since frozen==True
         object.__setattr__(self, "d_0_B", new_col_vec(0.0,
                                                       self.height/2,
                                                       0.0))
@@ -44,6 +45,8 @@ class RocketState:
     logger_name: str = __name__
 
     def __post_init__(self):
+        object.__setattr__(self, "m_fuel", self.params.m_fuel) # Fuel mass
+
         # Set random seed for reproducibility
         random.seed(self.params.seed)
 
@@ -71,15 +74,10 @@ class RocketState:
                          self.theta_C,
                          self.omega_C])
 
-    def _m_fuel(self):
-        """Mass of remaining fuel.
-        TODO: make decaying."""
-        return self.params.m_fuel
-
-    def _m_total(self, m_fuel):
+    def _m_total(self):
         """Total mass of rocket."""
         params = self.params
-        return params.m_B + params.m_C + m_fuel
+        return params.m_B + params.m_C + self.m_fuel
 
     def _R_B_to_I(self):
         """Rotation matrix from the body frame to the inertial frame."""
@@ -89,11 +87,11 @@ class RocketState:
             [math.sin(psi),  math.cos(psi)]
         ])
 
-    def _F_thrust_I(self, m_fuel, R_B_to_I):
+    def _F_thrust_I(self, R_B_to_I):
         """Force due to thrust (inertial frame)."""
         params = self.params
         # Check if out of fuel
-        if m_fuel == 0:
+        if self.m_fuel == 0:
             # No thrust.
             return new_col_vec(0.0, 0.0)
         else:
@@ -198,15 +196,13 @@ class RocketState:
         self.logger.debug(f"{alpha_C=}")
 
         # Calculate some intermediate values
-        m_fuel = self._m_fuel()
-        self.logger.debug(f"{m_fuel=}")
-        m_total = self._m_total(m_fuel)
+        m_total = self._m_total()
         self.logger.debug(f"{m_total=}")
 
         R_B_to_I = self._R_B_to_I()
         self.logger.debug(f"{R_B_to_I=}")
 
-        F_thrust_I = self._F_thrust_I(m_fuel, R_B_to_I)
+        F_thrust_I = self._F_thrust_I(R_B_to_I)
         self.logger.debug(f"{F_thrust_I=}")
 
         F_g_I = self._F_g_I(m_total)
@@ -240,5 +236,6 @@ class RocketState:
         self.omega += self._alpha_I(tau_total_I, I)
         self.theta_C += self.omega_C
         self.omega_C += alpha_C
+        self.m_fuel -= self.params.m_fuel_rate
 
         self.logger.debug(f"{self=}\n")

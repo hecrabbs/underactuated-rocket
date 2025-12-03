@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from constants import ACCEL_GRAVITY, I_BASIS
+from constants import ACCEL_GRAVITY, I_BASIS, J_BASIS, K_BASIS
 from helpers import COL_VEC, cross_2d, new_col_vec
 
 
@@ -21,13 +21,13 @@ class RocketParams:
     mag_d_1: float # Control mass horizontal offset (m)
     sigma_thrust: float # Thrust noise standard deviation (variance = sigma^2)
     F_thrust_nominal: float # Nominal force of thrust (i.e. without noise) (N)
-    seed: int # Seed for random variables so that randomness is reproducible
+    mag_a_g: float=9.81 # Magnitude of acceleration due to gravity (m/s^2)
+    seed: int=0 # Seed for random variables so that randomness is reproducible
 
     def __post_init__(self):
         # C vertical offset. Use object.__setattr__ since frozen==True
-        object.__setattr__(self, "d_0_B", new_col_vec(0.0,
-                                                      self.height/2,
-                                                      0.0))
+        object.__setattr__(self,"d_0_B",
+                           new_col_vec(0.0, self.mag_d_0, 0.0))
         object.__setattr__(self, "r_B_to_thrust_B",
                            new_col_vec(0.0, -self.height/2))
 
@@ -41,7 +41,9 @@ class RocketState:
     omega: float = 0.0 # Angular vel
     theta_C: float = math.pi/2 # Control mass vector direction (body frame)
     omega_C: float = 0.0 # Control mass angular velocity (body frame)
+    m_fuel: float = 0.0 # Fuel mass set in post init
 
+    # Use logger name to differentiate multiple instances
     logger_name: str = __name__
 
     def __post_init__(self):
@@ -61,10 +63,11 @@ class RocketState:
         self.p[1][0] = state_arr[1]
         self.v[0][0] = state_arr[2]
         self.v[1][0] = state_arr[3]
-        self.psi = state_arr[4]
-        self.omega = state_arr[5]
+        self.psi     = state_arr[4]
+        self.omega   = state_arr[5]
         self.theta_C = state_arr[6]
         self.omega_C = state_arr[7]
+        self.m_fuel  = state_arr[8]
 
     def get_state(self):
         return np.array([*self.p.T[0],
@@ -72,7 +75,8 @@ class RocketState:
                          self.psi,
                          self.omega,
                          self.theta_C,
-                         self.omega_C])
+                         self.omega_C,
+                         self.m_fuel])
 
     def _m_total(self):
         """Total mass of rocket."""
@@ -103,11 +107,40 @@ class RocketState:
 
     def _F_g_I(self, m_total):
         """Force due to gravity (interial frame)."""
-        return  new_col_vec(0.0, m_total * -ACCEL_GRAVITY)
+        return  new_col_vec(0.0, m_total * -self.params.mag_a_g)
 
-    def _F_total_I(self, F_thrust_I, F_g_I):
+    def _F_C_I(self, alpha_C, R_B_to_I):
+        """Force due to acceleration of C (inertial frame)."""
+        print("CALCULATING F_C_I:")
+        theta_C = self.theta_C
+        print(f"{theta_C=}")
+        mag_d_1 = self.params.mag_d_1
+        print(f"{mag_d_1=}")
+
+        # Define radial and tangential unit vectors
+        u_R = math.cos(theta_C)*I_BASIS + math.sin(theta_C)*K_BASIS
+        print(f"{u_R=}")
+        u_T = -math.sin(theta_C)*I_BASIS + math.cos(theta_C)*K_BASIS
+        print(f"{u_T=}")
+
+        # Accel. vector of C is sum of radial and tangential accel.
+        a_R = -(self.omega_C**2)*mag_d_1*u_R
+        print(f"{a_R=}")
+        a_T = alpha_C*mag_d_1*u_T
+        print(f"{a_T=}")
+        a_C_B = a_R + a_T
+        print(f"{a_C_B=}")
+        a_C_Bx = a_C_B[0][0]
+        print(f"{a_C_Bx=}")
+
+        # Calculate in body frame then rotate from B to I
+        F_C_B = new_col_vec(self.params.m_C * a_C_Bx, 0.0)
+        print(f"{F_C_B=}")
+        return R_B_to_I @ F_C_B
+
+    def _F_total_I(self, F_thrust_I, F_g_I, F_C_I):
         """Sum of all translational forces (inertial frame)."""
-        return F_thrust_I + F_g_I
+        return F_thrust_I + F_g_I - F_C_I
 
     def _a_I(self, F_total_I, m_total):
         """Rocket acceleration (inertial frame)."""
@@ -208,7 +241,10 @@ class RocketState:
         F_g_I = self._F_g_I(m_total)
         self.logger.debug(f"{F_g_I=}")
 
-        F_total_I = self._F_total_I(F_thrust_I, F_g_I)
+        F_C_I = self._F_C_I(alpha_C, R_B_to_I)
+        self.logger.debug(f"{F_C_I=}")
+
+        F_total_I = self._F_total_I(F_thrust_I, F_g_I, F_C_I)
         self.logger.debug(f"{F_total_I=}")
 
         d_1_B = self._d_1_B()

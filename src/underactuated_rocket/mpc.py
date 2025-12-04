@@ -6,7 +6,7 @@ import control.optimal as opt
 import matplotlib.pyplot as plt
 import numpy as np
 
-from state import RocketParams, RocketState
+from underactuated_rocket.state import RocketParams, RocketState
 
 t0 = time()
 

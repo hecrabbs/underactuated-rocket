@@ -4,8 +4,8 @@ import logging
 import matplotlib.pyplot as plt
 import numpy as np
 
-from helpers import new_col_vec
-from state import RocketParams, RocketState
+from underactuated_rocket.helpers import new_col_vec
+from underactuated_rocket.state import RocketParams, RocketState
 
 
 def main(verbosity=logging.WARNING):

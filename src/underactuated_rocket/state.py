@@ -5,8 +5,9 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from constants import ACCEL_GRAVITY, I_BASIS, J_BASIS, K_BASIS
-from helpers import COL_VEC, cross_2d, new_col_vec
+from underactuated_rocket.constants import (ACCEL_GRAVITY, I_BASIS, J_BASIS,
+                                            K_BASIS)
+from underactuated_rocket.helpers import COL_VEC, cross_2d, new_col_vec
 
 
 @dataclass(frozen=True)

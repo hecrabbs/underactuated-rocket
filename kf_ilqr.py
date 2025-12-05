@@ -13,8 +13,8 @@ class ILQRConfig:
     max_iter: int = 20    # iLQR iterations
     tol: float = 1e-3     # cost improvement tolerance
     reg: float = 1e-4     # regularization on Q_uu
-    u_min: float = -1.0   # min alpha_C
-    u_max: float = 1.0    # max alpha_C
+    u_min: float = -2.0   # min alpha_C
+    u_max: float =  2.0   # max alpha_C
     eps_fd: float = 1e-4  # finite-difference step
 
 
@@ -79,10 +79,6 @@ def linearize_dynamics(x: np.ndarray, u: float,
     return A, B
 
 
-# -----------------
-# Kalman Filter
-# -----------------
-
 @dataclass
 class KFConfig:
     process_sigma: float = 0.1   # process noise std (per state dim)
@@ -131,17 +127,25 @@ class FullStateKF:
         self.x = self.x + K @ y
         I = np.eye(n_x)
         self.P = (I - K @ H) @ self.P
+    
+# Indices in the state vector:
+# State = [p_x, p_y, v_x, v_y, psi, omega, theta_C, omega_C, m_fuel]
+IX_PX = 0
+IX_PY = 1
+IX_VX = 2
+IX_VY = 3
+IX_PSI = 4
+IX_OMEGA = 5
+IX_THETA_C = 6
+IX_OMEGA_C = 7
+IX_M_FUEL = 8
 
-
-# -----------------
-# iLQR
-# -----------------
 
 def ilqr(params: RocketParams,
-         x0: np.ndarray,
-         x_goal: np.ndarray,
-         config: ILQRConfig,
-         rocket_model: RocketState) -> tuple[np.ndarray, np.ndarray]:
+        x0: np.ndarray,
+        x_goal: np.ndarray,
+        config: ILQRConfig,
+        rocket_model: RocketState) -> tuple[np.ndarray, np.ndarray]:
     """
     iLQR over the RocketState dynamics.
 
@@ -152,22 +156,89 @@ def ilqr(params: RocketParams,
     n_x = x0.shape[0]
     n_u = 1
 
-    # Cost weights:
-    # (You can tweak these numbers.)
-    Q = np.diag([
-        10.0,    # p_x
-        10.0,    # p_y
-        5.0,  # v_x
-        5.0,    # v_y
-        328281.0,   # psi
-        32828064.0, # omega
-        0.0,    # theta_C
-        1013.0, # omega_C
-        0.0,    # m_fuel
-    ])
-    Qf = 10.0 * Q
-    R = 0.01  # small penalty on control effort
+    # indices
+    IX_PX = 0
+    IX_PY = 1
+    IX_VX = 2
+    IX_VY = 3
+    IX_PSI = 4
+    IX_OMEGA = 5
+    IX_THETA_C = 6
+    IX_OMEGA_C = 7
+    IX_M_FUEL = 8
 
+    # --- normalization scales ---
+    x_max = np.array([
+        200.0,              # p_x [m]
+        120.0,              # p_y [m]
+        50.0,               # v_x [m/s]
+        50.0,               # v_y [m/s]
+        np.deg2rad(180.0),  # psi [rad]
+        np.deg2rad(360.0),  # omega [rad/s]
+        np.deg2rad(90.0),   # theta_C [rad]
+        np.deg2rad(360.0),  # omega_C [rad/s]
+        10.0,               # m_fuel [kg]
+    ])
+    Q_base_diag = 1.0 / (x_max ** 2)
+
+    # relative importance
+    w = np.ones_like(x_max)
+    w[IX_PX]    = 10.0    # x
+    w[IX_PY]    = 10.0   # y (more important)
+    w[IX_VX]    = 6.0    # vx
+    w[IX_VY]    = 6.0    # vy
+    w[IX_PSI]   = 2.0
+    w[IX_OMEGA] = 2.0
+    w[IX_THETA_C]  = 1.0
+    w[IX_OMEGA_C]  = 1.0
+    w[IX_M_FUEL]   = 0.1
+    
+
+    Q_diag = w * Q_base_diag
+    Q  = np.diag(Q_diag)
+    Qf = 20.0 * Q.copy()
+
+    # strongly enforce being at the goal and nearly stopped
+    Qf[IX_PX, IX_PX]    *= 10.0   # x close to goal
+    Qf[IX_PY, IX_PY]    *= 10.0  # y very close to goal
+    Qf[IX_VX, IX_VX]    *= 10.0  # vx ~ 0 at final time
+    Qf[IX_VY, IX_VY]    *= 10.0  # vy ~ 0 at final time
+
+
+    # control penalty (moderate)
+    R = 0.2 #7.0 / (config.u_max ** 2)
+
+    # ground penalty
+    y_floor   = 10.0
+    w_floor   = 20.0    # mild per-step penalty if y < 0
+    w_floor_T = 500.0   # strong penalty if final y < 0
+    w_down = 0
+    w_down_T = 0
+
+    def running_cost(x, u):
+        dx = x - x_goal
+        cost = dx @ Q @ dx + R * (u ** 2)
+
+        # small penalty any time we go below ground
+        y = x[IX_PY]
+        if y < y_floor:
+            cost += w_floor * (y_floor - y) ** 2
+        return cost
+
+    def terminal_cost(x):
+        dx = x - x_goal
+        cost = dx @ Qf @ dx
+
+        # big penalty if we *end* below ground
+        y = x[IX_PY]
+        if y < y_floor:
+            cost += w_floor_T * (y_floor - y) ** 2
+        return cost
+
+
+    # -------------------------------------------------------------
+    # Rollout function
+    # -------------------------------------------------------------
     def rollout(u_seq_local: np.ndarray) -> tuple[np.ndarray, float]:
         x_seq = np.zeros((config.N, n_x))
         x_seq[0] = x0
@@ -176,47 +247,49 @@ def ilqr(params: RocketParams,
         for k in range(config.N - 1):
             x = x_seq[k]
             u = float(u_seq_local[k])
-
-            dx = x - x_goal
-            stage_cost = dx @ Q @ dx + R * u**2
-
-            # Soft ground penalty
-            y = x[1]
-            if y < 0.0:
-                stage_cost += 1e6 * (abs(y) ** 2)  # huge penalty underground
-
-            cost += stage_cost
-
+            cost += running_cost(x, u)
             x_next = dynamics_f(x, u, rocket_model)
             x_seq[k + 1] = x_next
 
-        dxN = x_seq[-1] - x_goal
-        terminal_cost = dxN @ Qf @ dxN
-        yN = x_seq[-1][1]
-        if yN < 0.0:
-            terminal_cost += 1e6 * (abs(yN) ** 2)
-
-        cost += terminal_cost
+        cost += terminal_cost(x_seq[-1])
         return x_seq, cost
 
-
-    # Initial control sequence (zero)
+    # -------------------------------------------------------------
+    # Initial control sequence (zero) and rollout
+    # -------------------------------------------------------------
     u_seq = np.zeros(config.N - 1)
     x_seq, J = rollout(u_seq)
 
+    # -------------------------------------------------------------
+    # iLQR iterations
+    # -------------------------------------------------------------
     for _ in range(config.max_iter):
         # Linearize along current trajectory
         A_list = []
         B_list = []
         for k in range(config.N - 1):
             A_k, B_k = linearize_dynamics(x_seq[k], float(u_seq[k]),
-                                          rocket_model, config.eps_fd)
+                                        rocket_model, config.eps_fd)
             A_list.append(A_k)
             B_list.append(B_k)
 
-        # Backward pass
-        V_x = 2.0 * Qf @ (x_seq[-1] - x_goal)
+        # -------- Backward pass --------
+        # Terminal value derivatives (include altitude / v_y penalties)
+        xN = x_seq[-1]
+        dxN = xN - x_goal
+        V_x = 2.0 * Qf @ dxN
         V_xx = 2.0 * Qf
+
+        # Extra terminal gradient / Hessian from altitude floor
+        yN = xN[IX_PY]
+        vyN = xN[IX_VY]
+        if yN < y_floor:
+            V_x[IX_PY] += 2.0 * w_floor_T * (yN - y_floor)
+            V_xx[IX_PY, IX_PY] += 2.0 * w_floor_T
+        if vyN < 0.0:
+            V_x[IX_VY] += 2.0 * w_down_T * vyN
+            V_xx[IX_VY, IX_VY] += 2.0 * w_down_T
+
         K_list = []
         k_list = []
 
@@ -225,11 +298,24 @@ def ilqr(params: RocketParams,
             u = float(u_seq[k])
             dx = x - x_goal
 
+            # Stage cost derivatives from quadratic part
             l_x = 2.0 * Q @ dx
             l_u = 2.0 * R * u
             l_xx = 2.0 * Q
             l_uu = 2.0 * R
             l_xu = np.zeros((n_x, 1))
+
+            # Add derivatives from altitude floor penalty
+            y = x[IX_PY]
+            vy = x[IX_VY]
+            if y < y_floor:
+                # cost += w_floor * (y_floor - y)^2
+                l_x[IX_PY] += 2.0 * w_floor * (y - y_floor)
+                l_xx[IX_PY, IX_PY] += 2.0 * w_floor
+            if vy < 0.0:
+                # cost += w_down * vy^2
+                l_x[IX_VY] += 2.0 * w_down * vy
+                l_xx[IX_VY, IX_VY] += 2.0 * w_down
 
             A_k = A_list[k]
             B_k = B_list[k]
@@ -241,6 +327,7 @@ def ilqr(params: RocketParams,
             Q_uu = l_uu + float(B_k.T @ V_xx @ B_k)
             Q_xu = l_xu + A_k.T @ V_xx @ B_k
 
+            # Regularize Q_uu
             Q_uu_reg = Q_uu + config.reg
             inv_Q_uu = 1.0 / Q_uu_reg
 
@@ -250,18 +337,19 @@ def ilqr(params: RocketParams,
             K_list.insert(0, K_k)
             k_list.insert(0, k_k)
 
+            # Update V_x, V_xx
             V_x = Q_x \
-                  + (K_k.T * Q_uu * k_k).reshape(-1) \
-                  + (K_k.T * Q_u).reshape(-1) \
-                  + (Q_xu * k_k).reshape(-1)
+                + (K_k.T * Q_uu * k_k).reshape(-1) \
+                + (K_k.T * Q_u).reshape(-1) \
+                + (Q_xu * k_k).reshape(-1)
 
             V_xx = Q_xx \
                 + (K_k.T * Q_uu) @ K_k \
                 + K_k.T @ Q_xu.T \
                 + Q_xu @ K_k
-            V_xx = 0.5 * (V_xx + V_xx.T)
+            V_xx = 0.5 * (V_xx + V_xx.T)  # symmetrize
 
-        # Forward line search
+        # -------- Forward pass with line search --------
         alphas = [1.0, 0.5, 0.25, 0.1]
         best_J = np.inf
         best_u = None
@@ -278,14 +366,11 @@ def ilqr(params: RocketParams,
                 du = alpha * k_list[k] + float(K_list[k] @ dx)
                 u_new[k] = np.clip(u_seq[k] + du, config.u_min, config.u_max)
 
-                dx_cost = x_new[k] - x_goal
-                J_new += dx_cost @ Q @ dx_cost + R * u_new[k]**2
-
+                J_new += running_cost(x_new[k], float(u_new[k]))
                 x_next = dynamics_f(x_new[k], float(u_new[k]), rocket_model)
                 x_new[k + 1] = x_next
 
-            dxN = x_new[-1] - x_goal
-            J_new += dxN @ Qf @ dxN
+            J_new += terminal_cost(x_new[-1])
 
             if J_new < best_J:
                 best_J = J_new

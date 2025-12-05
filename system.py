@@ -26,7 +26,7 @@ def main(verbosity=logging.WARNING):
     # --------------------
     params = RocketParams(
         m_B=100,
-        m_C=1,
+        m_C=1.2,
         m_fuel=10,
         m_fuel_rate=0.0,
         height=1.0,
@@ -48,8 +48,8 @@ def main(verbosity=logging.WARNING):
     x0 = rocket_true.get_state()
     # Example: want to move to x=50, keep everything else near zero
     x_goal = x0.copy()
-    x_goal[0] = 50.0     # target x
-    x_goal[1] = 50.0      # target y
+    x_goal[0] = 100.0     # target x
+    x_goal[1] = 100.0      # target y
     x_goal[2] = 0.0      # v_x
     x_goal[4] = 0.0      # psi
     x_goal[5] = 0.0      # omega
@@ -58,7 +58,7 @@ def main(verbosity=logging.WARNING):
     # --------------------
     # KF initial state
     # --------------------
-    x_hat0 = x0.copy()        # initial estimate = true (you can perturb this)
+    x_hat0 = x0.copy()        # initial estimate = true
     P0 = np.eye(len(x0)) * 1.0
 
     kf_cfg = KFConfig(
@@ -71,7 +71,7 @@ def main(verbosity=logging.WARNING):
     # iLQR configuration
     # --------------------
     ilqr_cfg = ILQRConfig(
-        N=30,
+        N=80,
         max_iter=20,
         tol=1e-3,
         reg=1e-4,

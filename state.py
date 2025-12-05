@@ -274,11 +274,11 @@ class RocketState:
         self.omega_C += alpha_C
         self.m_fuel -= self.params.m_fuel_rate
 
-        # ---- Ground contact at y = 0 ----
+        # ---- prevent y < 0 ----
         if self.p[1, 0] < 0.0:
             self.p[1, 0] = 0.0
             if self.v[1, 0] < 0.0:
-                self.v[1, 0] = 0.0  # inelastic "stick" on impact
+                self.v[1, 0] = 0.0
 
         self.logger.debug(f"{self=}\n")
 

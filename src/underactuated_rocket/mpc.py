@@ -1,11 +1,11 @@
 import argparse
 import logging
 from dataclasses import replace
+from time import time
 from typing import Callable
 
 import control as ctl
 import control.optimal as opt
-import matplotlib.pyplot as plt
 import numpy as np
 
 import underactuated_rocket.cost_functions as cost_fcns
@@ -50,7 +50,8 @@ def mpc(rocket_state: RocketState,
     DURATION = 1 + num_iter*control_horizon
 
     # Copy rocket params, but w/ different seed
-    model_params = replace(rocket_state.params, seed=654321)
+    model_params = replace(rocket_state.params,
+                           seed=rocket_state.params.seed + 100)
     model_state = RocketState(model_params)
 
     def sys_updfcn(t,x,u,params):
@@ -114,6 +115,20 @@ def mpc(rocket_state: RocketState,
                  predicted_cost)
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--duration", type=int, default=120,
+                        help="duration of simulation in seconds")
+    parser.add_argument("--mc", type=float, default=100e3,
+                        help="mass (m_C) of the control mass (C)")
+    parser.add_argument("--d0", type=float, default=49,
+                        help="magnitude of C vertical offset (mag_d_0)")
+    parser.add_argument("--px", type=float, default=1000,
+                        help="goal x position")
+    parser.add_argument("--method", type=str, default="COBYLA",
+                        help=("minimize method used by the MPC (COBYLA, "
+                              "Powell, BFGS, etc.) 'COBYLA' is default."))
+    args = parser.parse_args()
+
     # Logging
     logger_name = "mpc_logger"
     level = logging.DEBUG
@@ -124,15 +139,27 @@ if __name__ == "__main__":
     listener.start()
 
     try:
-        rocket_params = RocketParams(100e3, 40, 4, seed=123456)
+        rocket_params = RocketParams(args.mc, args.d0, seed=123456)
         rocket_state = RocketState(params=rocket_params,
                                    logger_name=logger_name)
 
-        goal_state = [1000, 0, 0, 0, 0, 0, 0, 0, 0]
-
+        goal_state = [args.px, 0, 0, 0, 0, 0, 0, 0, 0]
         cost_fcn = cost_fcns.cost1(goal_state)
 
-        mpc(rocket_state, cost_fcn, 8, 2, 80, minimize_method="COBYLA")
+        prediction_horizon = 8
+        control_horizon = 2
+        num_iter = int(args.duration/control_horizon)
+        print(f"Running MPC for {num_iter} iterations "
+              f"({args.duration} seconds)...\n")
+
+        t0 = time()
+        mpc(rocket_state,
+            cost_fcn,
+            prediction_horizon,
+            control_horizon,
+            num_iter,
+            minimize_method=args.method)
+        print("Total execution time:", time()-t0)
     except:
         raise
     finally:

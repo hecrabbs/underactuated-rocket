@@ -20,10 +20,11 @@ class RocketParams:
     """
     # Mass of control mass C (kg)
     m_C: float
+
     # Control mass vertical offset (m) (body frame)
-    mag_d_0: float
+    mag_d_0: float=49 # Near top of rocket
     # Control mass horizontal offset (m) (body frame)
-    mag_d_1: float
+    mag_d_1: float=4 # Near radius of rocket
 
     # Mass of body B (kg)
     m_B: float=1587573.295 # ~3.5e6 lbs

@@ -26,17 +26,17 @@ class RocketParams:
     mag_d_1: float
 
     # Mass of body B (kg)
-    m_B: float=1_587_573.295 # ~3.5e6 lbs
+    m_B: float=1587573.295 # ~3.5e6 lbs
     # Rocket height (m)
     height: float=98.3
     # Rocket radius (m)
     radius: float=4.2
     # Nominal force of thrust (N)
-    F_thrust_nominal: float=4*1852e3 # Launch thrust for 4 RS-25 engines
+    F_thrust_nominal: float=4*1852e3 + 2*14679e3 # Thrust (engines & boosters)
     # Thrust standard deviation
     sigma_thrust: float=321e3 # Selected 4*1852e3*.13/3
     # Initial mass of fuel (kg)
-    m_fuel_init: float=1_016_046.909 # 5.74e6 - 3.5e6 = 2.24e6 lbs
+    m_fuel_init: float=1016046.909 # 5.74e6 - 3.5e6 = 2.24e6 lbs
     # Rate of fuel mass
     m_fuel_rate: float=2116.764 # Burn time = ~480 sec
     # Magnitude of acceleration due to gravity (m/s^2)
@@ -44,8 +44,9 @@ class RocketParams:
 
     # Seed for random variables so that randomness is reproducible
     seed: int=0
-    # Use unique logger name to differentiate logs from multiple instances
-    logger_name: str=__name__
+
+    def set_seed(self, n):
+        object.__setattr__(self, "seed", n)
 
 class RocketState:
     def __init__(self,
@@ -55,7 +56,8 @@ class RocketState:
                  psi: float=0.0,
                  omega: float=0.0,
                  theta_C: float=math.pi/2,
-                 omega_C: float=0.0):
+                 omega_C: float=0.0,
+                 logger_name: str=__name__):
         """
         Create a new rocket state.
 
@@ -73,8 +75,11 @@ class RocketState:
             Rocket angular velocity (rad/s) (inertial frame).
         theta_C: float
             Control mass direction (input frame).
-        omega_C: float=0.0
+        omega_C: float
             Control mass angular velocity (input frame).
+        logger_name: str
+            Passed to `logging.getLogger()`. Use unique logger name to
+            differentiate logs from multiple instances.
         """
         # Rocket parameters
         self.params=params
@@ -92,27 +97,27 @@ class RocketState:
         self.random = random.Random(self.params.seed)
 
         # Some constant intermediate variables
-        self.d_0_B = new_col_vec(0.0, self.params.mag_d_0),
+        self.d_0_B = new_col_vec(0.0, self.params.mag_d_0)
         self.r_thrust_B = new_col_vec(0.0, -self.params.height/2)
 
         # Dict for intermediate variables
         self._variables = {}
 
         # Set up logger
-        self.logger = logging.getLogger(self.params.logger_name)
-        self.logger.debug(f"{self=}\n")
+        self.logger = logging.getLogger(logger_name)
+        self.logger.debug(f"{self.get_state()=}\n")
 
     @property
     def p(self): return self._p.copy()
 
     @p.setter
-    def p(self, p): self._p = p.copy()
+    def p(self, arr): self._p = arr.copy()
 
     @property
     def v(self): return self._v.copy()
 
     @v.setter
-    def v(self, v): self._v = v.copy()
+    def v(self, arr): self._v = arr.copy()
 
     @property
     def variables(self): return self._variables.copy()
@@ -141,10 +146,10 @@ class RocketState:
 
     def get_state(self):
         """Get internal state as an array."""
-        return np.array([self.p[0][0],
-                         self.p[1][0],
-                         self.v[0][0],
-                         self.v[1][0],
+        return np.array([self._p[0][0],
+                         self._p[1][0],
+                         self._v[0][0],
+                         self._v[1][0],
                          self.psi,
                          self.omega,
                          self.theta_C,
@@ -153,10 +158,10 @@ class RocketState:
 
     def set_state(self, state_arr):
         """Set internal state from an array."""
-        self.p[0][0] = state_arr[0]
-        self.p[1][0] = state_arr[1]
-        self.v[0][0] = state_arr[2]
-        self.v[1][0] = state_arr[3]
+        self._p[0][0] = state_arr[0]
+        self._p[1][0] = state_arr[1]
+        self._v[0][0] = state_arr[2]
+        self._v[1][0] = state_arr[3]
         self.psi     = state_arr[4]
         self.omega   = state_arr[5]
         self.theta_C = state_arr[6]
@@ -235,7 +240,7 @@ class RocketState:
     def r_C_B(self):
         """2D Distance vector to the control mass "C" (body frame)."""
         d_1_B = self.get_var(self.d_1_B)
-        return self.d_0_B + (d_1_B[0][0]*I_BASIS)[0:2][:]
+        return self.d_0_B + (d_1_B[0][0]*I_BASIS)[0:2,:]
 
     def r_CM_B(self):
         """Distance vector to the Center of Mass (CM) (body frame)."""
@@ -260,9 +265,16 @@ class RocketState:
         F_thrust_I = self.get_var(self.F_thrust_I)
         return cross_2d(r_CM_to_thrust_I, F_thrust_I)
 
+    def r_CM_to_d_0_I(self):
+        r_CM_B = self.get_var(self.r_CM_B)
+        r_CM_to_d_0_B = -r_CM_B + self.d_0_B
+        return self.get_var(self.R_IB) @ r_CM_to_d_0_B
+
     def tau_C_I(self):
-        """TODO: Torque due to acceleration of C (inertial frame)."""
-        return 0
+        """Torque due to acceleration of C (inertial frame)."""
+        r_CM_to_d_0_I = self.get_var(self.r_CM_to_d_0_I)
+        F_C_I = self.get_var(self.F_C_I)
+        return cross_2d(r_CM_to_d_0_I, -F_C_I)
 
     def tau_total_I(self):
         """Sum of all torques (inertial frame)."""
@@ -283,27 +295,41 @@ class RocketState:
         I_z = self.get_var(self.I_z)
         return tau_total_I / I_z
 
-    def transition(self, alpha_C: float):
+    def transition(self, alpha_C: float, dt: float=1.0):
         """
         In place state transition.
 
         Parameters
         ----------
         alpha_C : float
-            Control mass angular acceleration (input/action)
+            Control mass angular acceleration (input/action).
+        dt : float
+            Delta time.
+        ulims : tuple[float, float]
+            Lower and upper limits for the input alpha_C.
         """
         # Clear old variables
         self.clear_vars(alpha_C)
 
+        # Calculate new variables
+        a_I = self.get_var(self.a_I)
+        alpha_I = self.get_var(self.alpha_I)
+
         # Update state
-        self.p += self.v
-        self.v += self.a_I()
-        self.psi += self.omega
-        self.omega += self.alpha_I()
-        self.theta_C += self.omega_C
-        self.omega_C += alpha_C
-        self.m_fuel -= self.params.m_fuel_rate
+        self.p += self.v*dt
+        self.v += a_I*dt**2
+        self.psi += self.omega*dt
+        self.omega += alpha_I*dt**2
+        self.theta_C += self.omega_C*dt
+        self.omega_C += alpha_C*dt**2
+        # Only update fuel if it isn't empty
+        if self.m_fuel > 0:
+            self.m_fuel = self.m_fuel - self.params.m_fuel_rate*dt
+        # Clip negative fuel to zero
+        if self.m_fuel < 0: self.m_fuel = 0
 
         # Log variables and new state
-        self.logger.debug(f"{self._variables=}")
         self.logger.debug(f"{self.get_state()=}")
+        self.logger.debug(f"{self._variables=}")
+
+        return self.get_state()

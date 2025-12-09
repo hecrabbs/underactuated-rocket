@@ -1,170 +1,139 @@
+import argparse
 import logging
-from time import time
+from dataclasses import replace
+from typing import Callable
 
 import control as ctl
 import control.optimal as opt
 import matplotlib.pyplot as plt
 import numpy as np
 
+import underactuated_rocket.cost_functions as cost_fcns
+from underactuated_rocket.logger import FileLogListener
+from underactuated_rocket.plotting import plot_results
 from underactuated_rocket.state import RocketParams, RocketState
 
-t0 = time()
 
-rocket_params = RocketParams(
-    m_B=100,
-    m_C=1,
-    m_fuel=10,
-    height=1,
-    radius=0.1,
-    mag_d_1=0.1,
-    sigma_thrust=0.1,
-    F_thrust_nominal=1500,
-    seed = 123456
-)
+def mpc(rocket_state: RocketState,
+        cost_fcn: Callable,
+        prediction_horizon: int,
+        control_horizon: int,
+        num_iter: int,
+        minimize_method: str="COBYLA"):
+    """
+    Run MPC.
 
-tmp_state = RocketState(rocket_params)
-LEN_STATE_SPACE = len(tmp_state.get_state())
+    Parameters
+    ----------
+    rocket_state : RocketState
+        State object for the rocket being controlled.
 
-def updfcn(t, x, u, params):
-    tmp_state.set_state(x)
-    tmp_state.transition(u[0])
-    return tmp_state.get_state()
+    prediction_horizon : int
+        Duration over which cost is minimized each iteration.
 
-sys = ctl.nlsys(updfcn, inputs=["alpha_C"], states=LEN_STATE_SPACE, dt=1)
+    control_horizon : int
+        Duration of predicted horizon for which predicted inputs are used.
 
-iter_dur = 15 # Compute n second trajectory
-use_dur = 5 # Only use first m seconds trajectory
+    num_iter : int
+        Number of prediction horizions to minimize.
 
-num_iter = 30 # Repeat
+    cost_fcn : Callable
+        Cost function. See `underactuated_rocket.cost_functions` for examples.
 
-total_dur = num_iter*use_dur + 1 # Plus one for initial state
+    minimize_method : str, default="COBYLA"
+        Which method should `scipy.optimize.minimize` use?
 
-inputs = np.empty((num_iter, iter_dur))
-computed_states = np.empty((num_iter, LEN_STATE_SPACE, iter_dur))
-computed_cost = np.empty(num_iter)
-actual_states = np.empty((LEN_STATE_SPACE, total_dur))
+    """
+    # Save initial state
+    INIT_STATE = rocket_state.get_state()
+    STATE_LEN = len(INIT_STATE)
+    DURATION = 1 + num_iter*control_horizon
 
-# Logging
-level = logging.WARNING
-logger_name = "rocket_state"
-logger = logging.getLogger(logger_name)
-logger.setLevel(level)
-handler = logging.StreamHandler()
-handler.setLevel(level)
-formatter = logging.Formatter("%(levelname)s: %(message)s")
-handler.setFormatter(formatter)
-logger.addHandler(handler)
+    # Copy rocket params, but w/ different seed
+    model_params = replace(rocket_state.params, seed=654321)
+    model_state = RocketState(model_params)
 
-rocket_state = RocketState(params=rocket_params, logger_name=logger_name)
-actual_states[:,0] = rocket_state.get_state()
+    def sys_updfcn(t,x,u,params):
+        model_state.set_state(x)
+        return model_state.transition(u[0])
 
-xf = [50, 0, 0, 0, 0, 0, 0, 0]
-Q1 = np.diag((1,0,100,0,328281,32828064,0,1013))
-R1 = 0
-traj_cost = opt.quadratic_cost(sys, Q1, R1, x0=xf)
+    model_sys = ctl.nlsys(sys_updfcn,
+                          inputs=["alpha_C"],
+                          states=STATE_LEN,
+                          dt=True)
 
-constr = opt.state_range_constraint(sys,
-    lb=["-inf", 0, "-inf", "-inf", -3.1416, "-inf", "-inf", "-inf"],
-    ub=["inf", "inf", "inf", "inf", 3.1416, "inf", "inf", "inf"])
+    # Data structures
+    predicted_inputs = np.empty((num_iter, prediction_horizon))
+    predicted_states = np.empty((num_iter, STATE_LEN,
+                                 prediction_horizon))
+    predicted_cost = np.empty(num_iter)
 
-for i in range(num_iter):
-    # Get optimal trajectory
-    res = opt.solve_optimal_trajectory(sys,
-                                       np.arange(0, iter_dur, 1),
-                                       tmp_state.get_state(),
-                                       traj_cost,
-                                       terminal_cost=traj_cost,
-                                    #    trajectory_constraints=constr
-                                    #    initial_guess=-(rocket_state.omega_C/10)
-    )
-    print(f"Iter {i} compute time: {time()-t0}")
-    print(f"Success: {res.success}, Cost: {res.cost}")
-    print()
+    actual_inputs = np.empty(DURATION-1)
+    actual_states = np.empty((STATE_LEN, DURATION))
+    actual_states[:,0] = INIT_STATE
 
-    # Update data structs
-    inputs[i] = res.inputs[0]
-    computed_states[i] = res.states
-    computed_cost[i] = res.cost
+    pred_t_arr = np.arange(prediction_horizon)
+    current_state = INIT_STATE
 
-    # Take optimal trajectory for portion of computed
-    for j in range(use_dur):
-        idx = i*use_dur + j + 1
-        print(idx)
-        u = res.inputs[0][j]
-        rocket_state.transition(u)
-        actual_states[:,idx] = rocket_state.get_state()
+    for i in range(num_iter):
+        print(i)
 
-    # Set solve state to match actual trajectory
-    tmp_state.set_state(rocket_state.get_state())
+        res = opt.solve_optimal_trajectory(model_sys,
+                                           pred_t_arr,
+                                           current_state,
+                                           cost_fcn,
+                                           minimize_method=minimize_method)
+        print(f"{res.message}\n"
+              f"{res.success}")
 
-fig,axs = plt.subplots(3,3)
-fig.tight_layout()
+        # Update data structures
+        predicted_inputs[i] = res.inputs[0]
+        predicted_states[i] = res.states
+        predicted_cost[i] = res.cost
 
-t_full = np.arange(total_dur)
+        # Update actual system
+        for j in range(control_horizon):
+            u = res.inputs[0][j]
+            s = rocket_state.transition(u)
+            actual_idx = i*control_horizon + j
+            actual_inputs[actual_idx] = u
+            actual_states[:,actual_idx+1] = s
 
-axs[0,0].set_title("Input (deg/s^2)")
-for i, arr in enumerate(inputs):
-    t = np.arange(i*use_dur, i*use_dur + iter_dur, 1)
-    axs[0,0].plot(t, np.degrees(arr), '*-')
+        # Update current model state
+        current_state = s
 
-axs[0,1].set_title("OmegaC (deg/s)")
-for i, arr in enumerate(computed_states):
-    t = np.arange(i*use_dur, i*use_dur + iter_dur, 1)
-    axs[0,1].plot(t, np.degrees(arr[-1]), '*-', label="exp")
-axs[0,1].plot(t_full, np.degrees(actual_states[-1]), '.-', c='b', label="act")
+        print()
 
-axs[0,2].set_title("ThetaC (deg)")
-for i, arr in enumerate(computed_states):
-    t = np.arange(i*use_dur, i*use_dur + iter_dur, 1)
-    axs[0,2].plot(t, np.degrees(arr[-2]), '*-')
-axs[0,2].plot(t_full, np.degrees(actual_states[-2]), '.-', c='b')
-# axs[0,2].set_title("Cost")
-# axs[0,2].plot(computed_cost)
+    plot_results(rocket_params,
+                 actual_inputs,
+                 actual_states,
+                 control_horizon,
+                 prediction_horizon,
+                 predicted_inputs,
+                 predicted_states,
+                 predicted_cost)
 
-axs[1,0].set_title("Pos (m)")
-for i, arr in enumerate(computed_states):
-    t = np.arange(i*use_dur, i*use_dur + iter_dur, 1)
-    axs[1,0].plot(arr[0], arr[1], '*-')
-axs[1,0].plot(actual_states[0], actual_states[1], '.-', c='b')
-axs[1,0].set_xlim(-100,300)
-axs[1,0].set_ylim(0,10e3)
+if __name__ == "__main__":
+    # Logging
+    logger_name = "mpc_logger"
+    level = logging.DEBUG
+    logger = logging.getLogger(logger_name)
+    logger.setLevel(level)
+    # Log to file in background
+    listener = FileLogListener("mpc.log", logger)
+    listener.start()
 
-axs[1,1].set_title("Vx (m/s)")
-for i, arr in enumerate(computed_states):
-    t = np.arange(i*use_dur, i*use_dur + iter_dur, 1)
-    axs[1,1].plot(t, arr[2], '*-')
-axs[1,1].plot(t_full, actual_states[2], '.-', c='b')
+    try:
+        rocket_params = RocketParams(100e3, 40, 4, seed=123456)
+        rocket_state = RocketState(params=rocket_params,
+                                   logger_name=logger_name)
 
-axs[1,2].set_title("Vy (m/s)")
-for i, arr in enumerate(computed_states):
-    t = np.arange(i*use_dur, i*use_dur + iter_dur, 1)
-    axs[1,2].plot(t, arr[3], '*-')
-axs[1,2].plot(t_full, actual_states[3], '.-')
+        goal_state = [1000, 0, 0, 0, 0, 0, 0, 0, 0]
 
-axs[2,0].set_title("Omega (deg/s)")
-for i, arr in enumerate(computed_states):
-    t = np.arange(i*use_dur, i*use_dur + iter_dur, 1)
-    axs[2,0].plot(t, np.degrees(arr[5]), '*-')
-axs[2,0].plot(t_full, np.degrees(actual_states[5]), '.-', c='b')
+        cost_fcn = cost_fcns.cost1(goal_state)
 
-axs[2,1].set_title("Yaw (deg)")
-for i, arr in enumerate(computed_states):
-    t = np.arange(i*use_dur, i*use_dur + iter_dur, 1)
-    axs[2,1].plot(t, np.degrees(arr[4]), '*-')
-axs[2,1].plot(t_full, np.degrees(actual_states[4]), '.-', c='b')
-
-axs[2,2].set_title("C pos 1D body frame")
-mag_d_1 = rocket_params.mag_d_1
-for i, arr in enumerate(computed_states):
-    t = np.arange(i*use_dur, i*use_dur + iter_dur, 1)
-    c_1d_exp = mag_d_1*np.cos(arr[-2])
-    axs[2,2].plot(c_1d_exp, t, '*-')
-c_1d_act = mag_d_1*np.cos(actual_states[-2])
-axs[2,2].plot(c_1d_act, t_full, '.-', c='b')
-axs[2,2].set_xlabel("C horizontal offset")
-axs[2,2].set_ylabel("Time")
-axs[2,2].set_xlim(-mag_d_1, mag_d_1)
-
-fig.legend()
-plt.show(block=False)
-input()
+        mpc(rocket_state, cost_fcn, 8, 2, 80, minimize_method="COBYLA")
+    except:
+        raise
+    finally:
+        listener.stop()

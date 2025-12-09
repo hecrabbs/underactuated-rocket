@@ -14,6 +14,8 @@ import numpy as np
 
 DUMMY_SYS = ctl.nlsys(lambda _: None, inputs=1, states=9, dt=True)
 
+############################# Good Cost Functions ############################
+
 def cost1(goal_state=[1000, 0, 0, 0, 0, 0, 0, 0, 0]):
     """Drives rocket to x position, and then up. Works well with "COBYLA"
     minimize method, but produces fairly large inputs & omega C."""
@@ -30,21 +32,24 @@ def cost1(goal_state=[1000, 0, 0, 0, 0, 0, 0, 0, 0]):
     R = 10 # Keep inputs small
     return opt.quadratic_cost(DUMMY_SYS, Q, R, x0=goal_state)
 
-# def cost2(goal_state):
-#     Q = np.diag((1,0,1,0,100e3,0,0,0,0))
-#     R = 200
-#     return opt.quadratic_cost(DUMMY_SYS, Q, R, x0=goal_state)
 
-# def cost3(goal_state):
-#     Q = np.diag((1,1,0,0,0,100e3,0,0,0))
-#     R = 1
-#     return opt.quadratic_cost(DUMMY_SYS, Q, R, x0=goal_state)
+############################## Bad Cost Functions #############################
 
-# def desire_yaw_cost(goal_state):
-#     def cost_fcn(x,u):
-#         pxdiff = goal_state[0] - x[0]
-#         pydiff = goal_state[1] - x[1]
-#         desired_yaw = -math.atan2(pxdiff, pydiff)
-#         return (1e3*abs(desired_yaw - x[4])**2
-#               + 1e2*(x[5]**2))
-#     return cost_fcn
+def cost2(goal_state):
+    Q = np.diag((1,0,1,0,100e3,0,0,0,0))
+    R = 200
+    return opt.quadratic_cost(DUMMY_SYS, Q, R, x0=goal_state)
+
+def cost3(goal_state):
+    Q = np.diag((1,1,0,0,0,100e3,0,0,0))
+    R = 1
+    return opt.quadratic_cost(DUMMY_SYS, Q, R, x0=goal_state)
+
+def desire_yaw_cost(goal_state):
+    def cost_fcn(x,u):
+        pxdiff = goal_state[0] - x[0]
+        pydiff = goal_state[1] - x[1]
+        desired_yaw = -math.atan2(pxdiff, pydiff)
+        return (1e3*abs(desired_yaw - x[4])**2
+              + 1e2*(x[5]**2))
+    return cost_fcn

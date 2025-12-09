@@ -1,6 +1,6 @@
 """Common constants."""
 
-from helpers import new_col_vec
+from underactuated_rocket.helpers import new_col_vec
 
 ACCEL_GRAVITY = 9.81 # m/s^2
 

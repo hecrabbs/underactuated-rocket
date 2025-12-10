@@ -9,7 +9,8 @@ def plot_results(rocket_params,
                  prediction_horizon=None,
                  predicted_inputs=None,
                  predicted_states=None,
-                 predicted_cost=None):
+                 predicted_cost=None,
+                 block=True):
 
     fig,axs = plt.subplots(3,4)
     fuel_empty = states[-1] == 0
@@ -146,6 +147,18 @@ def plot_results(rocket_params,
 
     ax.plot(t_arr, np.degrees(states[7]), '*-', c='b')
 
+    fig,ax = plt.subplots()
+    ax.set_title("Pos (m)")
+
+    if predicted_states is not None:
+        for arr in predicted_states:
+            ax.plot(arr[0], arr[1], '.-', alpha=alpha)
+
+    ax.plot(np.where(~fuel_empty, states[0], np.nan),
+            np.where(~fuel_empty, states[1], np.nan),'*-', c='b')
+
+    ax.plot(np.where(fuel_empty, states[0], np.nan),
+            np.where(fuel_empty, states[1], np.nan),'*-', c='r')
 
     fig.legend()
-    plt.show()
+    plt.show(block=block)

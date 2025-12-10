@@ -43,8 +43,8 @@ class RocketParams:
     # Magnitude of acceleration due to gravity (m/s^2)
     mag_a_g: float=ACCEL_GRAVITY
 
-    # Seed for random variables so that randomness is reproducible
-    seed: int=0
+    # Optional seed if you want randomness to be reproducible
+    seed: int=None
 
     def set_seed(self, n):
         object.__setattr__(self, "seed", n)

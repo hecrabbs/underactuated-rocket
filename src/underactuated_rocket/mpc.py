@@ -50,8 +50,7 @@ def mpc(rocket_state: RocketState,
     DURATION = 1 + num_iter*control_horizon
 
     # Copy rocket params, but w/ different seed
-    model_params = replace(rocket_state.params,
-                           seed=rocket_state.params.seed + 100)
+    model_params = replace(rocket_state.params)
     model_state = RocketState(model_params)
 
     def sys_updfcn(t,x,u,params):
@@ -105,14 +104,13 @@ def mpc(rocket_state: RocketState,
 
         print()
 
-    plot_results(rocket_params,
-                 actual_inputs,
-                 actual_states,
-                 control_horizon,
-                 prediction_horizon,
-                 predicted_inputs,
-                 predicted_states,
-                 predicted_cost)
+    return (actual_inputs,
+            actual_states,
+            control_horizon,
+            prediction_horizon,
+            predicted_inputs,
+            predicted_states,
+            predicted_cost)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -153,14 +151,20 @@ if __name__ == "__main__":
               f"({args.duration} seconds)...\n")
 
         t0 = time()
-        mpc(rocket_state,
-            cost_fcn,
-            prediction_horizon,
-            control_horizon,
-            num_iter,
-            minimize_method=args.method)
+        results = mpc(rocket_state,
+                      cost_fcn,
+                      prediction_horizon,
+                      control_horizon,
+                      num_iter,
+                      minimize_method=args.method)
+        plot_results(rocket_params, *results)
         print("Total execution time:", time()-t0)
+
+        listener.stop()
     except:
         raise
     finally:
-        listener.stop()
+        try:
+            listener.stop()
+        except AttributeError:
+            pass

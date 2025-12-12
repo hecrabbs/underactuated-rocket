@@ -201,8 +201,8 @@ def ilqr(params: RocketParams,
     # strongly enforce being at the goal and nearly stopped
     Qf[IX_PX, IX_PX]    *= 10.0   # x close to goal
     Qf[IX_PY, IX_PY]    *= 10.0  # y very close to goal
-    Qf[IX_VX, IX_VX]    *= 10.0  # vx ~ 0 at final time
-    Qf[IX_VY, IX_VY]    *= 10.0  # vy ~ 0 at final time
+    Qf[IX_VX, IX_VX] = 0.0   # don't penalize v_x at final time
+    Qf[IX_VY, IX_VY] = 0.0
 
 
     # control penalty (moderate)

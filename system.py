@@ -16,6 +16,12 @@ from kf_ilqr import (
     ilqr,
 )
 
+# --- toggles ---
+USE_KF = False          # if False, plan from true state and skip KF predict/update
+USE_OBS_NOISE = False   # if False, measurement = true state (no observation noise)
+GOAL_TOL = 20.0   # meters
+
+
 
 def main(verbosity=logging.WARNING):
     # Logging root level
@@ -50,7 +56,6 @@ def main(verbosity=logging.WARNING):
     x_goal = x0.copy()
     x_goal[0] = 100.0     # target x
     x_goal[1] = 100.0      # target y
-    x_goal[2] = 0.0      # v_x
     x_goal[4] = 0.0      # psi
     x_goal[5] = 0.0      # omega
     # You can tweak the goal further as needed
@@ -65,7 +70,9 @@ def main(verbosity=logging.WARNING):
         process_sigma=0.1,
         meas_sigma=0.05,
     )
-    kf = FullStateKF(x_hat0, P0, kf_cfg)
+
+    kf = FullStateKF(x_hat0, P0, kf_cfg) if USE_KF else None
+
 
     # --------------------
     # iLQR configuration
@@ -87,52 +94,77 @@ def main(verbosity=logging.WARNING):
     true_traj = []
     est_traj = []
     control_seq = []
+    distances = []
 
     for t in range(T):
         x_true = rocket_true.get_state()
         true_traj.append(x_true.copy())
-        est_traj.append(kf.x.copy())
+        dist = np.linalg.norm(x_true[:2] - x_goal[:2])   # Euclidean (p_x, p_y)
+        distances.append(dist)
+        if dist <= GOAL_TOL:
+            print(f"Rocket reached goal at step {t} (time = {t} steps)")
+            break
 
-        # Plan from current estimate x_hat to goal using iLQR
-        u_plan, x_plan = ilqr(params, kf.x, x_goal, ilqr_cfg, rocket_model)
+        # --- choose state used for planning / "estimate" ---
+        if USE_KF:
+            x_for_control = kf.x.copy()
+            est_traj.append(kf.x.copy())
+        else:
+            # no KF: use true state as "estimate"
+            x_for_control = x_true.copy()
+            est_traj.append(x_true.copy())
+
+        # Plan from current estimate x_hat (or true state) to goal using iLQR
+        u_plan, x_plan = ilqr(params, x_for_control, x_goal, ilqr_cfg, rocket_model)
         u0 = float(u_plan[0])
         control_seq.append(u0)
 
         # Apply control to true rocket (with noise)
         rocket_true.transition(u0)
 
-        # Get noisy observation of true state
-        z = rocket_true.observe(sigma_meas=kf_cfg.meas_sigma)
+        # Get measurement (with or without observation noise)
+        if USE_OBS_NOISE:
+            z = rocket_true.observe(sigma_meas=kf_cfg.meas_sigma)
+        else:
+            z = rocket_true.get_state()
 
-        # KF predict + update
-        kf.predict(u0, rocket_model, ilqr_cfg.eps_fd)
-        kf.update(z)
+        # KF predict + update (only if enabled)
+        if USE_KF:
+            kf.predict(u0, rocket_model, ilqr_cfg.eps_fd)
+            kf.update(z)
 
-    true_traj = np.array(true_traj)  # shape (T, 9)
-    est_traj = np.array(est_traj)    # shape (T, 9)
+    true_traj = np.array(true_traj)
+    est_traj = np.array(est_traj) if USE_KF else None
     control_seq = np.array(control_seq)
+    distances = np.array(distances)
 
-    # --------------------
-    # Plot results
-    # --------------------
-    t_axis = np.arange(T)
+    T_sim = len(true_traj)
+    t_axis = np.arange(T_sim)
+    t_axis_ctrl = np.arange(len(control_seq))
+    t_axis_dist = np.arange(len(distances))
 
-    fig, axs = plt.subplots(3, 2, figsize=(10, 10))
+
+
+    fig, axs = plt.subplots(4, 2, figsize=(10, 10))
     fig.tight_layout(pad=2.0)
 
-    # x vs y
-    axs[0, 0].set_title("Position (x vs y)")
+    
+
+    # x vs y 
+    axs[0, 0].set_title("Position (x vs y)") 
     axs[0, 0].plot(true_traj[:, 0], true_traj[:, 1], label="true")
-    axs[0, 0].plot(est_traj[:, 0], est_traj[:, 1], "--", label="KF est")
-    axs[0, 0].scatter([x_goal[0]], [x_goal[1]], marker="x", color="red", label="goal")
-    axs[0, 0].legend()
-    axs[0, 0].set_xlabel("x")
+    if USE_KF:
+        axs[0, 0].plot(est_traj[:, 0], est_traj[:, 1], "--", label="KF est")
+    axs[0, 0].scatter([x_goal[0]], [x_goal[1]], marker="x", color="red", label="goal") 
+    axs[0, 0].legend() 
+    axs[0, 0].set_xlabel("x") 
     axs[0, 0].set_ylabel("y")
 
     # x over time
     axs[0, 1].set_title("x position over time")
     axs[0, 1].plot(t_axis, true_traj[:, 0], label="true")
-    axs[0, 1].plot(t_axis, est_traj[:, 0], "--", label="KF est")
+    if USE_KF:
+        axs[0, 1].plot(t_axis, est_traj[:, 0], "--", label="KF est")
     axs[0, 1].axhline(x_goal[0], color="red", linestyle=":", label="goal")
     axs[0, 1].legend()
     axs[0, 1].set_xlabel("time step")
@@ -141,7 +173,8 @@ def main(verbosity=logging.WARNING):
     # yaw
     axs[1, 0].set_title("Yaw psi (deg)")
     axs[1, 0].plot(t_axis, np.degrees(true_traj[:, 4]), label="true")
-    axs[1, 0].plot(t_axis, np.degrees(est_traj[:, 4]), "--", label="KF est")
+    if USE_KF:
+        axs[1, 0].plot(t_axis, np.degrees(est_traj[:, 4]), "--", label="KF est")
     axs[1, 0].set_xlabel("time step")
     axs[1, 0].set_ylabel("psi (deg)")
     axs[1, 0].legend()
@@ -149,25 +182,39 @@ def main(verbosity=logging.WARNING):
     # omega_C
     axs[1, 1].set_title("omega_C (deg/s)")
     axs[1, 1].plot(t_axis, np.degrees(true_traj[:, 7]), label="true")
-    axs[1, 1].plot(t_axis, np.degrees(est_traj[:, 7]), "--", label="KF est")
+    if USE_KF:
+        axs[1, 1].plot(t_axis, np.degrees(est_traj[:, 7]), "--", label="KF est")
     axs[1, 1].set_xlabel("time step")
     axs[1, 1].set_ylabel("omega_C (deg/s)")
     axs[1, 1].legend()
 
     # control
     axs[2, 0].set_title("Control alpha_C (deg/s^2)")
-    axs[2, 0].plot(t_axis, np.degrees(control_seq))
+    axs[2, 0].plot(t_axis_ctrl, np.degrees(control_seq))
     axs[2, 0].set_xlabel("time step")
     axs[2, 0].set_ylabel("alpha_C (deg/s^2)")
 
     # v_x
     axs[2, 1].set_title("v_x (m/s)")
     axs[2, 1].plot(t_axis, true_traj[:, 2], label="true")
-    axs[2, 1].plot(t_axis, est_traj[:, 2], "--", label="KF est")
+    if USE_KF:
+        axs[2, 1].plot(t_axis, est_traj[:, 2], "--", label="KF est")
     axs[2, 1].set_xlabel("time step")
     axs[2, 1].set_ylabel("v_x")
     axs[2, 1].legend()
 
+    # Distance to goal plot
+    axs[3, 0].set_title("Distance to Goal")
+    axs[3, 0].plot(t_axis_dist, distances, label="distance")
+    axs[3, 0].set_xlabel("Time step")
+    axs[3, 0].set_ylabel("Distance (m)")
+    axs[3, 0].grid(True)
+    axs[3, 0].legend()
+
+
+
+
+    fig.savefig("results.png", dpi=300, bbox_inches="tight")  # save as image
     plt.show()
 
 

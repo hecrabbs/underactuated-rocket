@@ -69,8 +69,8 @@ def mpc(rocket_state: RocketState,
     predicted_cost = np.empty(num_iter)
 
     actual_inputs = np.empty(DURATION-1)
-    actual_states = np.empty((STATE_LEN, DURATION))
-    actual_states[:,0] = INIT_STATE
+    actual_states = np.empty((DURATION, STATE_LEN))
+    actual_states[0] = INIT_STATE
 
     pred_t_arr = np.arange(prediction_horizon)
     current_state = INIT_STATE
@@ -97,7 +97,7 @@ def mpc(rocket_state: RocketState,
             s = rocket_state.transition(u)
             actual_idx = i*control_horizon + j
             actual_inputs[actual_idx] = u
-            actual_states[:,actual_idx+1] = s
+            actual_states[actual_idx+1] = s
 
         # Update current model state
         current_state = s
@@ -114,9 +114,9 @@ def mpc(rocket_state: RocketState,
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--duration", type=int, default=120,
+    parser.add_argument("--duration", type=int, default=100,
                         help="duration of simulation in seconds")
-    parser.add_argument("--mc", type=float, default=100e3,
+    parser.add_argument("--mc", type=float, default=1e3,
                         help="mass (m_C) of the control mass (C)")
     parser.add_argument("--d0", type=float, default=49,
                         help="magnitude of C vertical offset (mag_d_0)")

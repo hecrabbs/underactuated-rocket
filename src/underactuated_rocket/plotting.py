@@ -3,18 +3,35 @@ from matplotlib import pyplot as plt
 
 
 def plot_results(rocket_params,
-                 inputs,
-                 states,
-                 control_horizon=None,
-                 prediction_horizon=None,
-                 predicted_inputs=None,
-                 predicted_states=None,
-                 predicted_cost=None,
-                 block=True):
+                inputs,
+                states,
+                control_horizon=None,
+                prediction_horizon=None,
+                predicted_inputs=None,
+                predicted_states=None,
+                predicted_cost=None,
+                block=True):
+    """
+    Grid of subplots contatining states and other usefull plots.
 
+    Parameter formats:
+    * `inputs`: 1d array.
+    * `states`: 2d array; each row contains a state array.
+    * `predicted_inputs`: 2d array; each row contains an input array over the
+    prediction horizon.
+    * `predicted_states`: 3d array; each row contains an array of input arrays
+
+    If used, the `predicted_inputs` parameter should be formatted such that
+    each row contains an input array over the prediction horizon.
+
+    If used, the `predicted_states` parameter should be formatted such that
+    horizon time steptimepoint./states parameters should be formated the
+    same, except the depth (3rd dimension) is the prediction horizon.
+    """
     fig,axs = plt.subplots(3,4)
-    fuel_empty = states[-1] == 0
-    t_arr = np.arange(states.shape[1])
+    states = np.vstack(states)
+    fuel_empty = states[:,-1] == 0
+    t_arr = np.arange(len(inputs) + 1)
     alpha = 0.25
 
     def predicted_t_arr(i):
@@ -42,7 +59,7 @@ def plot_results(rocket_params,
             ax.plot(mag_d_1*np.cos(arr[-3]),
                     predicted_t_arr(i), '.-', alpha=alpha)
 
-    ax.plot(mag_d_1*np.cos(states[-3]), t_arr, '*-', c='b')
+    ax.plot(mag_d_1*np.cos(states[:,-3]), t_arr, '*-', c='b')
     ax.set_xlim(-mag_d_1, mag_d_1)
 
 
@@ -53,11 +70,11 @@ def plot_results(rocket_params,
         for arr in predicted_states:
             ax.plot(arr[0], arr[1], '.-', alpha=alpha)
 
-    ax.plot(np.where(~fuel_empty, states[0], np.nan),
-            np.where(~fuel_empty, states[1], np.nan),'*-', c='b')
+    ax.plot(np.where(~fuel_empty, states[:,0], np.nan),
+            np.where(~fuel_empty, states[:,1], np.nan),'*-', c='b')
 
-    ax.plot(np.where(fuel_empty, states[0], np.nan),
-            np.where(fuel_empty, states[1], np.nan),'*-', c='r')
+    ax.plot(np.where(fuel_empty, states[:,0], np.nan),
+            np.where(fuel_empty, states[:,1], np.nan),'*-', c='r')
 
     ax = axs[0,3]
     ax.set_title("Cost")
@@ -74,7 +91,7 @@ def plot_results(rocket_params,
         for i, arr in enumerate(predicted_states):
             ax.plot(predicted_t_arr(i), arr[0], '.-', alpha=alpha)
 
-    ax.plot(t_arr, states[0], '*-', c='b')
+    ax.plot(t_arr, states[:,0], '*-', c='b')
 
 
     ax = axs[1,1]
@@ -84,7 +101,7 @@ def plot_results(rocket_params,
         for i, arr in enumerate(predicted_states):
             ax.plot(predicted_t_arr(i), arr[1], '.-', alpha=alpha)
 
-    ax.plot(t_arr, states[1], '*-', c='b')
+    ax.plot(t_arr, states[:,1], '*-', c='b')
 
 
     ax = axs[1,2]
@@ -94,7 +111,7 @@ def plot_results(rocket_params,
         for i, arr in enumerate(predicted_states):
             ax.plot(predicted_t_arr(i), arr[2], '.-', alpha=alpha)
 
-    ax.plot(t_arr, states[2], '*-', c='b')
+    ax.plot(t_arr, states[:,2], '*-', c='b')
 
 
     ax = axs[1,3]
@@ -104,7 +121,7 @@ def plot_results(rocket_params,
         for i, arr in enumerate(predicted_states):
             ax.plot(predicted_t_arr(i), arr[3], '.-', alpha=alpha)
 
-    ax.plot(t_arr, states[3], '*-', c='b')
+    ax.plot(t_arr, states[:,3], '*-', c='b')
 
 
 
@@ -115,7 +132,7 @@ def plot_results(rocket_params,
         for i, arr in enumerate(predicted_states):
             ax.plot(predicted_t_arr(i), np.degrees(arr[4]), '.-', alpha=alpha)
 
-    ax.plot(t_arr, np.degrees(states[4]), '*-', c='b')
+    ax.plot(t_arr, np.degrees(states[:,4]), '*-', c='b')
 
 
     ax = axs[2,1]
@@ -125,7 +142,7 @@ def plot_results(rocket_params,
         for i, arr in enumerate(predicted_states):
             ax.plot(predicted_t_arr(i), np.degrees(arr[5]), '.-', alpha=alpha)
 
-    ax.plot(t_arr, np.degrees(states[5]), '*-', c='b')
+    ax.plot(t_arr, np.degrees(states[:,5]), '*-', c='b')
 
 
     ax = axs[2,2]
@@ -135,7 +152,7 @@ def plot_results(rocket_params,
         for i, arr in enumerate(predicted_states):
             ax.plot(predicted_t_arr(i), np.degrees(arr[6]), '.-', alpha=alpha)
 
-    ax.plot(t_arr, np.degrees(states[6]), '*-', c='b')
+    ax.plot(t_arr, np.degrees(states[:,6]), '*-', c='b')
 
 
     ax = axs[2,3]
@@ -145,7 +162,7 @@ def plot_results(rocket_params,
         for i, arr in enumerate(predicted_states):
             ax.plot(predicted_t_arr(i), np.degrees(arr[7]), '.-', alpha=alpha)
 
-    ax.plot(t_arr, np.degrees(states[7]), '*-', c='b')
+    ax.plot(t_arr, np.degrees(states[:,7]), '*-', c='b')
 
     fig,ax = plt.subplots()
     ax.set_title("Pos (m)")
@@ -154,11 +171,11 @@ def plot_results(rocket_params,
         for arr in predicted_states:
             ax.plot(arr[0], arr[1], '.-', alpha=alpha)
 
-    ax.plot(np.where(~fuel_empty, states[0], np.nan),
-            np.where(~fuel_empty, states[1], np.nan),'*-', c='b')
+    ax.plot(np.where(~fuel_empty, states[:,0], np.nan),
+            np.where(~fuel_empty, states[:,1], np.nan),'*-', c='b')
 
-    ax.plot(np.where(fuel_empty, states[0], np.nan),
-            np.where(fuel_empty, states[1], np.nan),'*-', c='r')
+    ax.plot(np.where(fuel_empty, states[:,0], np.nan),
+            np.where(fuel_empty, states[:,1], np.nan),'*-', c='r')
 
     fig.legend()
     plt.show(block=block)

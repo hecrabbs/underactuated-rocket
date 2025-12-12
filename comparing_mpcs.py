@@ -8,7 +8,7 @@ from underactuated_rocket.plotting import plot_results
 from underactuated_rocket.state import RocketParams, RocketState
 
 duration = 4
-methods = ["COBYLA", "Powell", "BFGS"]
+methods = ["CG", "COBYLA", "Powell", "BFGS"]
 goal_pxs = [100, 1000, 10e3, 100e3, 1e6]
 goal_states = [
     [goal_pxs[i], 0, 0, 0, 0, 0, 0, 0, 0] for i in range(len(goal_pxs))]

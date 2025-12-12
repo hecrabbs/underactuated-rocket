@@ -36,6 +36,8 @@ class RocketParams:
     F_thrust_nominal: float=4*1852e3 + 2*14679e3 # Thrust (engines & boosters)
     # Thrust standard deviation
     sigma_thrust: float=321e3 # Selected 4*1852e3*.13/3
+    # Control mass wobble standard deviation
+    sigma_theta_C: float=math.radians(1/3) # Selected 3 sigma = 1 degrees
     # Initial mass of fuel (kg)
     m_fuel_init: float=1016046.909 # 5.74e6 - 3.5e6 = 2.24e6 lbs
     # Rate of fuel mass
@@ -321,7 +323,9 @@ class RocketState:
         self.v += a_I*dt**2
         self.psi += self.omega*dt
         self.omega += alpha_I*dt**2
-        self.theta_C += self.omega_C*dt
+        # Add some noise to control mass position.
+        self.theta_C += (self.omega_C*dt
+                         + self.random.gauss(sigma=self.params.sigma_theta_C))
         self.omega_C += alpha_C*dt**2
         # Only update fuel if it isn't empty
         if self.m_fuel > 0:

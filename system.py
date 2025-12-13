@@ -19,7 +19,7 @@ from kf_ilqr import (
 # --- toggles ---
 USE_KF = False          # if False, plan from true state and skip KF predict/update
 USE_OBS_NOISE = False   # if False, measurement = true state (no observation noise)
-GOAL_TOL = 20.0   # meters
+EARLY_STOP = True       # <--- NEW: stop when distance starts increasing
 
 
 
@@ -55,9 +55,7 @@ def main(verbosity=logging.WARNING):
     # Example: want to move to x=50, keep everything else near zero
     x_goal = x0.copy()
     x_goal[0] = 100.0     # target x
-    x_goal[1] = 100.0      # target y
-    x_goal[4] = 0.0      # psi
-    x_goal[5] = 0.0      # omega
+    x_goal[1] = 200.0      # target y
     # You can tweak the goal further as needed
 
     # --------------------
@@ -78,7 +76,7 @@ def main(verbosity=logging.WARNING):
     # iLQR configuration
     # --------------------
     ilqr_cfg = ILQRConfig(
-        N=80,
+        N=150,
         max_iter=20,
         tol=1e-3,
         reg=1e-4,
@@ -90,31 +88,53 @@ def main(verbosity=logging.WARNING):
     # --------------------
     # Closed-loop simulation
     # --------------------
-    T = 60  # number of control steps overall
+    T = 20  # max number of control steps overall
     true_traj = []
     est_traj = []
     control_seq = []
     distances = []
 
-    for t in range(T):
-        x_true = rocket_true.get_state()
-        true_traj.append(x_true.copy())
-        dist = np.linalg.norm(x_true[:2] - x_goal[:2])   # Euclidean (p_x, p_y)
-        distances.append(dist)
-        if dist <= GOAL_TOL:
-            print(f"Rocket reached goal at step {t} (time = {t} steps)")
-            break
+    best_dist = None
+    best_step = None
 
-        # --- choose state used for planning / "estimate" ---
+    for t in range(T):
+        # Current true state
+        x_true = rocket_true.get_state()
+
+        # Distance to goal in (p_x, p_y)
+        dist = np.linalg.norm(x_true[:2] - x_goal[:2])
+
+        if best_dist is None:
+            # First step: initialize best distance
+            best_dist = dist
+            best_step = t
+        else:
+            # Only apply the "stop when distance increases" rule if EARLY_STOP is True
+            if EARLY_STOP and dist > best_dist:
+                print(
+                    f"Distance started increasing at step {t}; "
+                    f"best distance = {best_dist:.3f} m at step {best_step}"
+                )
+                break
+
+            # Always track the closest distance reached so far
+            if dist < best_dist:
+                best_dist = dist
+                best_step = t
+
+        # Only append after we've decided *not* to break
+        true_traj.append(x_true.copy())
+        distances.append(dist)
+
+        # ---- choose state used for planning / "estimate" ----
         if USE_KF:
             x_for_control = kf.x.copy()
             est_traj.append(kf.x.copy())
         else:
-            # no KF: use true state as "estimate"
             x_for_control = x_true.copy()
             est_traj.append(x_true.copy())
 
-        # Plan from current estimate x_hat (or true state) to goal using iLQR
+        # Plan from current estimate to goal using iLQR
         u_plan, x_plan = ilqr(params, x_for_control, x_goal, ilqr_cfg, rocket_model)
         u0 = float(u_plan[0])
         control_seq.append(u0)
@@ -122,16 +142,26 @@ def main(verbosity=logging.WARNING):
         # Apply control to true rocket (with noise)
         rocket_true.transition(u0)
 
-        # Get measurement (with or without observation noise)
+        # Measurement (with or without noise)
         if USE_OBS_NOISE:
             z = rocket_true.observe(sigma_meas=kf_cfg.meas_sigma)
         else:
             z = rocket_true.get_state()
 
-        # KF predict + update (only if enabled)
+        # KF (if enabled)
         if USE_KF:
             kf.predict(u0, rocket_model, ilqr_cfg.eps_fd)
             kf.update(z)
+
+    
+    if best_dist is not None:
+        if EARLY_STOP:
+            print(f"Closest distance = {best_dist:.3f} m at step {best_step}")
+        else:
+            print(f"(No early stop) Closest distance over {T} steps = "
+                  f"{best_dist:.3f} m at step {best_step}")
+
+
 
     true_traj = np.array(true_traj)
     est_traj = np.array(est_traj) if USE_KF else None

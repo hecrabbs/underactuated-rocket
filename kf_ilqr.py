@@ -185,8 +185,8 @@ def ilqr(params: RocketParams,
     w = np.ones_like(x_max)
     w[IX_PX]    = 10.0    # x
     w[IX_PY]    = 10.0   # y (more important)
-    w[IX_VX]    = 6.0    # vx
-    w[IX_VY]    = 6.0    # vy
+    w[IX_VX]    = 1.0    # vx
+    w[IX_VY]    = 1.0    # vy
     w[IX_PSI]   = 2.0
     w[IX_OMEGA] = 2.0
     w[IX_THETA_C]  = 1.0

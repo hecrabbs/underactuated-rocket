@@ -19,17 +19,27 @@ DUMMY_SYS = ctl.nlsys(lambda _: None, inputs=1, states=9, dt=True)
 def cost1(goal_state=[1000, 0, 0, 0, 0, 0, 0, 0, 0]):
     """Drives rocket to x position, and then up. Works well with "COBYLA"
     minimize method, but produces fairly large inputs & omega C."""
+    # Q = np.diag((1,     # Drive x to goal x
+    #              0,
+    #              8,     # Keep vx small
+    #              0,
+    #              100e3, # Keep yaw small
+    #              0,
+    #              0,
+    #              10,    # Keep omega_C small
+    #              0
+    # ))
     Q = np.diag((1,     # Drive x to goal x
-                 0,
-                 8,     # Keep vx small
-                 0,
-                 100e3, # Keep yaw small
-                 0,
-                 0,
-                 10,    # Keep omega_C small
-                 0
+                0,
+                8,     # Keep vx small
+                0,
+                100e3, # Keep yaw small
+                0,
+                0,
+                0,    # Keep omega_C small
+                0
     ))
-    R = 10 # Keep inputs small
+    R = 0 # Keep inputs small
     return opt.quadratic_cost(DUMMY_SYS, Q, R, x0=goal_state)
 
 

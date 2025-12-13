@@ -1,5 +1,6 @@
 import argparse
 import logging
+import math
 from dataclasses import replace
 from time import time
 from typing import Callable
@@ -77,6 +78,18 @@ def mpc(rocket_state: RocketState,
 
     for i in range(num_iter):
         print(i)
+
+        # if current_state[0] < args.px-100:
+        #     goal_vx = 1
+        #     goal_yaw = math.radians(-0.1)
+        # elif current_state[0] > args.px+100:
+        #     goal_vx = -1
+        #     goal_yaw = math.radians(0.1)
+        # else:
+        #     goal_vx = 0
+        #     goal_yaw = 0
+        # goal_state = [args.px, 0, goal_vx, 0, goal_yaw, 0, 0, 0, 0]
+        # cost_fcn = cost_fcns.cost1(goal_state)
 
         res = opt.solve_optimal_trajectory(model_sys,
                                            pred_t_arr,
